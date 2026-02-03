@@ -1,0 +1,12 @@
+J-Flash Path 路径设置和.jflash文件路径设置，隐藏在一个折叠的二级菜单中 不显示在主页面。
+主页只保留 三个输入框，一个按钮。
+输入框分别对应BOOT路径、APP文件路径（两个用来merge的bin文件，一个用于boot，一个用于app）。还有一个输入框为Merge过后的hex文件路径。
+按钮对应执行。
+执行按钮执行后，会自动执行merge操作，并执行操作。
+
+需要有合并按钮，J-Flash Path 路径设置需要自动扫盘查找J-Flash.exe路径。
+
+
+现在Merge操作已经完成
+我现在需要能够批量Merge的功能拖入一个Boot文件夹和一个App文件夹，然后自动Merge成HEX文件，自动识别文件名（抓取关键子重复字样，匹配boot和app），自动Merge成HEX文件。
+

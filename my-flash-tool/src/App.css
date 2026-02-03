@@ -1,0 +1,34 @@
+@import "tailwindcss";
+
+/* v4 自定义颜色：与 tailwind.config 对齐，确保 @apply 可用 */
+@theme {
+  --color-bg: #0f172a;
+  --color-panel: #1e293b;
+  --color-accent: #06b6d4;
+  --color-success: #10b981;
+  --color-error: #ef4444;
+  --color-terminal: #0c0c0c;
+}
+
+/* 全局样式：让应用看起来更像原生软件 */
+body {
+  @apply bg-bg text-slate-200 overflow-hidden select-none;
+  font-family: 'Segoe UI', 'Roboto', sans-serif;
+  margin: 0;
+  padding: 0;
+}
+
+/* 自定义滚动条样式 (可选，为了暗黑模式更协调) */
+::-webkit-scrollbar {
+  width: 8px;
+}
+::-webkit-scrollbar-track {
+  background: #0f172a; 
+}
+::-webkit-scrollbar-thumb {
+  background: #334155; 
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #475569; 
+}
