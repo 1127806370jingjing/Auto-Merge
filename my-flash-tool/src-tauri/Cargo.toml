@@ -28,4 +28,3 @@ tauri-plugin-store = "2.4.2"
 tauri-plugin-dialog = "2.6.0"
 tauri-plugin-shell = "2.3.4"
 tauri-plugin-fs = "2"
-

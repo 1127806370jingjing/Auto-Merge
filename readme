@@ -17,4 +17,23 @@ J-Flash Path 路径设置和.jflash文件路径设置，隐藏在一个折叠的
 1.我希望在单个文件Merge的时候也能复用相同的逻辑，自动识别文件名（抓取关键子重复字样，匹配boot和app，匹配不成功提示不成功不许Merge），命名方式也和批量Merge一样，添加一个数字，数字为物料编号（我手动填写“22110510_+文件名.hex”）
 
 
-1.
+1. 我需要一个功能，能够帮我确认MCU的擦除与烧录HEX文件的操作。同样使用J-Flash.exe进行操作，具体为擦除（Erase Chip）与烧录HEX文件（Production Programming）的操作。
+
+擦除烧录执行的Jflash操作为：Connect → Erase Chip → Production Programming → Exit。
+
+并且添加状态提示，若连接失败，提示“未连接成功JFLASH”。
+
+这是一个单独的功能，单文件和批量Merge都可使用该功能。
+我需要使用这个功能验证Merge后的HEX文件能否正常烧录。
+
+2. 烧录后可以使用HID进行通信，获取PID和VID并记录显示在UI上。
+
+
+
+
+
+
+
+
+
+

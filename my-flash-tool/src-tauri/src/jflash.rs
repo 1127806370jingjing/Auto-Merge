@@ -6,7 +6,8 @@ use std::os::windows::process::CommandExt;
 use winreg::enums::*;
 use winreg::RegKey;
 
-// ⚠️ 调试完成后，可以把下面这行取消注释，隐藏黑框
+// ⚠️ 调试完成后，在 Command 上使用 .raw_arg(CREATE_NO_WINDOW.to_string()) 可隐藏黑框
+#[allow(dead_code)]
 const CREATE_NO_WINDOW: u32 = 0x08000000;
 
 #[tauri::command]
@@ -99,4 +100,58 @@ pub async fn execute_merge_and_flash(
                 jflash_path, args.join(" "), stdout, stderr))
         }
     }
+}
+
+// 🆕 单独烧录验证：Open Project -> Open Data(HEX) -> Auto -> Exit
+// J-Flash 官方语法：-openprj<path> -open<path>[,addr] -auto -exit（HEX 一般不需地址）
+#[tauri::command]
+pub async fn execute_flash_only(
+    jflash_path: String,
+    project_path: String,
+    hex_path: String
+) -> Result<String, String> {
+    
+    if !Path::new(&jflash_path).exists() { return Err("未找到 J-Flash 程序".into()); }
+    if !Path::new(&hex_path).exists() { return Err("找不到 HEX 文件".into()); }
+
+    // 与 execute_merge_and_flash 一致：不手动加引号，由 Command 传参（路径含空格时系统会处理）
+    let args = vec![
+        format!("-openprj{}", project_path),
+        format!("-open{}", hex_path),
+        "-auto".to_string(),
+        "-exit".to_string()
+    ];
+
+    let output = Command::new(&jflash_path)
+        .args(&args)
+        .raw_arg(CREATE_NO_WINDOW.to_string())
+        .output()
+        .map_err(|e| format!("启动 J-Flash 失败: {}", e))?;
+
+    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+    let all_out = format!("{}\n{}", stdout, stderr);
+
+    // 显式失败关键词：有则判为失败
+    if all_out.contains("Could not connect") || all_out.contains("Connection failed") || all_out.contains("Communication timed out") {
+        return Err(format!("⚠️ J-Flash 未连接成功\n请检查 J-Link 与芯片连接、电源。\n\nstdout:\n{}\nstderr:\n{}", stdout, stderr));
+    }
+    if all_out.contains("Failed") && (all_out.contains("Error") || all_out.contains("error")) {
+        return Err(format!("❌ 烧录失败\nCMD: {} {}\n\nstdout:\n{}\n\nstderr:\n{}", jflash_path, args.join(" "), stdout, stderr));
+    }
+
+    // 成功判定：进程退出码 0 即视为成功（无窗口模式下 J-Flash 常不写 stdout/stderr）
+    if output.status.success() {
+        return Ok(if all_out.trim().is_empty() {
+            "✨ 烧录成功".into()
+        } else {
+            format!("✨ 烧录成功\n{}", all_out.trim())
+        });
+    }
+
+    // 退出码非 0 才报失败
+    Err(format!(
+        "❌ 烧录失败 (退出码 {:?})\nCMD: {} {}\n\nstdout:\n{}\n\nstderr:\n{}",
+        output.status.code(), jflash_path, args.join(" "), stdout, stderr
+    ))
 }

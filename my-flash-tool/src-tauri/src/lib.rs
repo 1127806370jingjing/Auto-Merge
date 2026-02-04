@@ -1,5 +1,6 @@
 mod hid_monitor;
 mod jflash;
+mod hid;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -11,7 +12,9 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             jflash::auto_detect_jflash,
             jflash::execute_merge_and_flash,
-            hid_monitor::verify_device_pid
+            hid_monitor::verify_device_pid,
+            hid::scan_hid_devices,
+            jflash::execute_flash_only
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
