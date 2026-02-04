@@ -15,6 +15,7 @@ pub fn run() {
             hid_monitor::verify_device_pid,
             hid::scan_hid_devices,
             hid::get_hid_device_version,
+            hid::switch_hid_to_boot_mode,
             jflash::execute_flash_only
         ])
         .run(tauri::generate_context!())

@@ -5,8 +5,8 @@ import { readDir } from '@tauri-apps/plugin-fs';
 import { load } from '@tauri-apps/plugin-store';
 import { 
   Settings, Layers, Zap, CheckCircle2, XCircle, Loader2, Cpu, FileCog, 
-  Sparkles, AlertTriangle, ArrowRight, FolderOutput, FolderOpen, Hash, Link2, Unlink, 
-  Play, Usb, RefreshCw, Box, Flame
+  Sparkles, ArrowRight, FolderOutput, FolderOpen, Hash, Unlink, 
+  Usb, RefreshCw, Flame, ChevronDown, ChevronUp
 } from 'lucide-react';
 import clsx from 'clsx';
 import { autoMatchFiles, FilePair, verifyFileNameMatch } from './utils/matcher';
@@ -32,6 +32,12 @@ function isHidHighlight(dev: { vid: number; pid: number }, keywords: string[]): 
   const vidHex = '0x' + Number(dev.vid).toString(16).toLowerCase().padStart(4, '0');
   const pidHex = '0x' + Number(dev.pid).toString(16).toLowerCase().padStart(4, '0');
   return keywords.includes(vidHex) || keywords.includes(pidHex);
+}
+
+/** 设备名包含 Upgrade 视为 BOOT 模式 */
+function isBootModeDevice(dev: { product?: string }): boolean {
+  const name = (dev.product ?? '').toLowerCase();
+  return name.includes('upgrade');
 }
 
 // --- 🍬 UI 组件库 ---
@@ -125,6 +131,9 @@ function App() {
   const [deviceVersions, setDeviceVersions] = useState<Record<string, string>>({});
   const versionFetchingRef = useRef<Set<string>>(new Set());
   const [lastFlashedHexKeywords, setLastFlashedHexKeywords] = useState<string[]>([]);
+  const [selectedHidKey, setSelectedHidKey] = useState<string | null>(null);
+  const [bootSwitchLoading, setBootSwitchLoading] = useState<string | null>(null);
+  const [bootSwitchTip, setBootSwitchTip] = useState<string | null>(null);
 
   // HEX 烧录（左侧列表选择文件夹内 HEX 并烧录）
   const [tab, setTabInner] = useState<'single' | 'batch' | 'hex'>('single');
@@ -151,9 +160,9 @@ function App() {
 
   useEffect(() => { init(); }, []);
 
-  // HID 设备列表自动刷新（每 4 秒，拔插后更快看到）
+  // HID 设备列表自动刷新（每 2 秒，拔插后更快看到）
   useEffect(() => {
-    const t = setInterval(refreshHid, 4000);
+    const t = setInterval(refreshHid, 2000);
     return () => clearInterval(t);
   }, []);
 
@@ -519,33 +528,84 @@ function App() {
                 {hidDevices.length === 0 ? (
                   <div className="text-center text-slate-300 text-xs py-10">未检测到 HID 设备</div>
                 ) : (
-                  hidDevices.map((dev, i) => {
+                  [...hidDevices]
+                    .sort((a, b) => (isBootModeDevice(a) ? 1 : 0) - (isBootModeDevice(b) ? 1 : 0))
+                    .map((dev, i) => {
                     const key = hidDeviceKey(dev);
                     const highlighted = isHidHighlight(dev, lastFlashedHexKeywords);
+                    const isBoot = isBootModeDevice(dev);
                     const version = deviceVersions[key];
+                    const isSelected = selectedHidKey === key;
+                    const vidStr = dev.vid.toString(16).toUpperCase().padStart(4, '0');
+                    const pidStr = dev.pid.toString(16).toUpperCase().padStart(4, '0');
+                    const upageStr = dev.usage_page?.toString(16).toUpperCase().padStart(4, '0') ?? '—';
                     return (
                       <div
                         key={i}
+                        onClick={() => setSelectedHidKey(isSelected ? null : key)}
                         className={clsx(
-                          "p-3 rounded-xl shadow-sm hover:shadow-md transition-all group border",
-                          highlighted ? "bg-emerald-50 border-emerald-300 ring-2 ring-emerald-200" : "bg-white border-slate-100"
+                          "p-3 rounded-xl shadow-sm hover:shadow-md transition-all group border cursor-pointer",
+                          highlighted ? "bg-emerald-50 border-emerald-300 ring-2 ring-emerald-200" : isBoot ? "bg-amber-50/80 border-amber-200" : "bg-white border-slate-100"
                         )}
                       >
                         <div className="flex items-center justify-between gap-2">
                           <div className="font-bold text-slate-700 text-sm truncate flex-1">{dev.product || "Unknown Device"}</div>
+                          <span className="shrink-0 text-slate-400">{isSelected ? <ChevronUp size={14} /> : <ChevronDown size={14} />}</span>
+                          {isBoot && <span className="text-[10px] font-bold text-amber-700 bg-amber-100 px-1.5 py-0.5 rounded shrink-0">BOOT</span>}
                           {highlighted && <span className="text-[10px] font-bold text-emerald-600 shrink-0">烧录匹配</span>}
                         </div>
-                        <div className="text-[10px] text-slate-400 font-mono mt-1 group-hover:text-blue-500">
-                          VID: {dev.vid.toString(16).toUpperCase().padStart(4,'0')} · PID: {dev.pid.toString(16).toUpperCase().padStart(4,'0')} · UPage: {dev.usage_page?.toString(16).toUpperCase().padStart(4,'0') ?? '—'}
+                        <div className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1">
+                          <span className="text-[10px] text-slate-400 uppercase">VID</span>
+                          <span className="font-mono text-sm font-bold text-blue-600 bg-blue-50 px-1.5 py-0.5 rounded">0x{vidStr}</span>
+                          <span className="text-slate-300">·</span>
+                          <span className="text-[10px] text-slate-400 uppercase">PID</span>
+                          <span className="font-mono text-sm font-bold text-indigo-600 bg-indigo-50 px-1.5 py-0.5 rounded">0x{pidStr}</span>
+                          <span className="text-slate-300">·</span>
+                          <span className="text-[10px] text-slate-400">UPage</span>
+                          <span className="font-mono text-xs font-semibold text-slate-600">{upageStr}</span>
                         </div>
                         {version != null && (
-                          <div className="mt-2">
-                            <span className="text-[10px] text-slate-500">版本: {version}</span>
+                          <div className="mt-2 flex items-center gap-1.5">
+                            <span className="text-[10px] text-slate-400 uppercase">版本</span>
+                            <span className="font-mono text-sm font-bold text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded">{version}</span>
+                          </div>
+                        )}
+                        {isSelected && (
+                          <div className="mt-3 pt-3 border-t border-slate-100 space-y-2" onClick={e => e.stopPropagation()}>
+                            {isBoot ? (
+                              <div className="text-[10px] text-amber-700 font-medium">当前为 BOOT 模式 · 上方 PID/VID 即为 BOOT 的 PID/VID</div>
+                            ) : (
+                              <>
+                                <div className="text-[10px] text-slate-500 font-medium">当前为 APP 模式 · 可切换至 BOOT 模式查看 BOOT PID/VID</div>
+                                <button
+                                  onClick={async () => {
+                                    setBootSwitchLoading(key);
+                                    setBootSwitchTip(null);
+                                    try {
+                                      await invoke('switch_hid_to_boot_mode', { vid: dev.vid, pid: dev.pid, serial: dev.serial_number || null });
+                                      setBootSwitchTip('已发送进入 BOOT 指令，设备将重启；请稍后刷新列表查看 BOOT 设备（不同 PID/VID）');
+                                      setTimeout(() => { refreshHid(); setBootSwitchTip(null); setSelectedHidKey(null); }, 3500);
+                                    } catch (e: any) {
+                                      setBootSwitchTip('发送失败: ' + String(e).slice(0, 40));
+                                    }
+                                    setBootSwitchLoading(null);
+                                  }}
+                                  disabled={bootSwitchLoading === key}
+                                  className="w-full flex items-center justify-center gap-1.5 py-2 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold disabled:opacity-50"
+                                >
+                                  {bootSwitchLoading === key ? <Loader2 size={12} className="animate-spin" /> : <Layers size={12} />}
+                                  进入 BOOT 模式
+                                </button>
+                                {bootSwitchTip && selectedHidKey === key && (
+                                  <div className="text-[10px] text-blue-600 bg-blue-50 rounded p-2">{bootSwitchTip}</div>
+                                )}
+                              </>
+                            )}
                           </div>
                         )}
                       </div>
                     );
-                  })
+                    })
                 )}
               </div>
             </GlassCard>

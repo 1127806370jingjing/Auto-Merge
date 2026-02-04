@@ -104,6 +104,36 @@ pub fn get_hid_device_version(
         .ok_or_else(|| format!("未找到版本 (首包 {} 字节)", n))
 }
 
+/// APP 模式下发送 F0 01 F1 进入 BOOT 模式；用 Report ID 0 发送 [0xF0, 0x01, 0xF1]
+#[tauri::command]
+pub fn switch_hid_to_boot_mode(
+    vid: u16,
+    pid: u16,
+    serial: Option<String>,
+) -> Result<(), String> {
+    let api = HidApi::new().map_err(|e| format!("HID API Error: {}", e))?;
+    let serial_ok = serial.as_deref();
+    let device = api
+        .device_list()
+        .find(|d| {
+            if d.vendor_id() != vid || d.product_id() != pid {
+                return false;
+            }
+            match serial_ok {
+                None => true,
+                Some(s) if s.is_empty() => true,
+                Some(s) => d.serial_number().map(|sn| sn == s).unwrap_or(false),
+            }
+        })
+        .and_then(|d| d.open_device(&api).ok())
+        .or_else(|| api.open(vid, pid).ok())
+        .or_else(|| serial.as_ref().and_then(|s| api.open_serial(vid, pid, s.as_str()).ok()))
+        .ok_or_else(|| "打开设备失败".to_string())?;
+    const CMD_BOOT: [u8; 4] = [0x00, 0xF0, 0x01, 0xF1];
+    device.write(&CMD_BOOT).map_err(|e| format!("发送指令失败: {}", e))?;
+    Ok(())
+}
+
 fn find_version_in_response(buf: &[u8]) -> Option<String> {
     let needle = [0x02u8, 0x96, 0x00];
     for i in 0..buf.len().saturating_sub(6) {
