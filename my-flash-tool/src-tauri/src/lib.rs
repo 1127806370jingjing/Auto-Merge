@@ -14,6 +14,7 @@ pub fn run() {
             jflash::execute_merge_and_flash,
             hid_monitor::verify_device_pid,
             hid::scan_hid_devices,
+            hid::get_hid_device_version,
             jflash::execute_flash_only
         ])
         .run(tauri::generate_context!())

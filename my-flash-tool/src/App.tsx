@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { open, save } from '@tauri-apps/plugin-dialog';
 import { readDir } from '@tauri-apps/plugin-fs';
@@ -12,6 +12,27 @@ import clsx from 'clsx';
 import { autoMatchFiles, FilePair, verifyFileNameMatch } from './utils/matcher';
 
 const getStore = async () => await load('settings.json');
+
+/** 从 HEX 路径/文件名中提取十六进制关键词（0x 开头、_XXXX_ / XXXX. 或 XXXX.hex），用于在 HID 列表中高亮对应设备 */
+function extractHexKeywords(pathOrName: string): string[] {
+  const out = new Set<string>();
+  (pathOrName.match(/0x[0-9a-fA-F]+/g) || []).forEach(m => out.add(m.toLowerCase()));
+  const iter = pathOrName.matchAll(/(?:^|_|\-)([0-9a-fA-F]{4})(?=_|\-|\.|$|\s)/g);
+  for (const m of iter) if (m[1]) out.add('0x' + m[1].toLowerCase());
+  for (const m of pathOrName.matchAll(/([0-9a-fA-F]{4})\.hex/gi)) if (m[1]) out.add('0x' + m[1].toLowerCase());
+  return [...out];
+}
+
+function hidDeviceKey(dev: { vid: number; pid: number; serial_number?: string }) {
+  return `${dev.vid}-${dev.pid}-${dev.serial_number ?? ''}`;
+}
+
+function isHidHighlight(dev: { vid: number; pid: number }, keywords: string[]): boolean {
+  if (!keywords.length) return false;
+  const vidHex = '0x' + Number(dev.vid).toString(16).toLowerCase().padStart(4, '0');
+  const pidHex = '0x' + Number(dev.pid).toString(16).toLowerCase().padStart(4, '0');
+  return keywords.includes(vidHex) || keywords.includes(pidHex);
+}
 
 // --- 🍬 UI 组件库 ---
 
@@ -72,7 +93,6 @@ const CleanInput = ({ label, value, onClick, onChange, icon: Icon, placeholder =
 // --- 主程序 ---
 
 function App() {
-  const [tab, setTab] = useState<'single' | 'batch'>('single');
   const [showSettings, setShowSettings] = useState(false);
   
   // Config
@@ -102,14 +122,56 @@ function App() {
   // HID Info
   const [hidDevices, setHidDevices] = useState<any[]>([]);
   const [hidLoading, setHidLoading] = useState(false);
+  const [deviceVersions, setDeviceVersions] = useState<Record<string, string>>({});
+  const versionFetchingRef = useRef<Set<string>>(new Set());
+  const [lastFlashedHexKeywords, setLastFlashedHexKeywords] = useState<string[]>([]);
+
+  // HEX 烧录（左侧列表选择文件夹内 HEX 并烧录）
+  const [tab, setTabInner] = useState<'single' | 'batch' | 'hex'>('single');
+  const [hexFlashFolder, setHexFlashFolder] = useState('');
+  const [hexFileList, setHexFileList] = useState<{ name: string; path: string }[]>([]);
+  const [selectedHexPath, setSelectedHexPath] = useState('');
+  const [hexFlashStatus, setHexFlashStatus] = useState<'idle' | 'running' | 'success' | 'error'>('idle');
+  const [hexFlashLog, setHexFlashLog] = useState('');
+  const setTab = (t: 'single' | 'batch' | 'hex') => {
+    setTabInner(t);
+    if (t === 'hex' && !hexFlashFolder && (outDir || batchOutDir)) setHexFlashFolder(outDir || batchOutDir);
+  };
+
+  const runHexFlash = async () => {
+    if (!selectedHexPath || !jflashExe || !jflashPrj) return;
+    setHexFlashStatus('running'); setHexFlashLog('⏳ 正在烧录...');
+    try {
+      const res = await invoke<string>('execute_flash_only', { jflashPath: jflashExe, projectPath: jflashPrj, hexPath: selectedHexPath });
+      setHexFlashStatus('success'); setHexFlashLog(res);
+      setLastFlashedHexKeywords(extractHexKeywords(selectedHexPath));
+      refreshHid();
+    } catch (e: any) { setHexFlashStatus('error'); setHexFlashLog(String(e)); }
+  };
 
   useEffect(() => { init(); }, []);
 
-  // HID 设备列表自动刷新（每 8 秒）
+  // HID 设备列表自动刷新（每 4 秒，拔插后更快看到）
   useEffect(() => {
-    const t = setInterval(refreshHid, 500);
+    const t = setInterval(refreshHid, 4000);
     return () => clearInterval(t);
   }, []);
+
+  // 切到 HEX 且未选文件夹时，默认用单次/批量输出目录
+  useEffect(() => {
+    if (tab === 'hex' && !hexFlashFolder && (outDir || batchOutDir)) setHexFlashFolder(outDir || batchOutDir);
+  }, [tab, hexFlashFolder, outDir, batchOutDir]);
+
+  // HEX 文件夹变化时刷新 HEX 列表
+  useEffect(() => {
+    if (tab !== 'hex' || !hexFlashFolder) { setHexFileList([]); return; }
+    readDir(hexFlashFolder).then(entries => {
+      const hex = entries
+        .filter(e => e.name?.toLowerCase().endsWith('.hex'))
+        .map(e => ({ name: e.name!, path: `${hexFlashFolder}\\${e.name}` }));
+      setHexFileList(hex);
+    }).catch(() => setHexFileList([]));
+  }, [tab, hexFlashFolder]);
 
   const init = async () => {
     const s = await getStore();
@@ -118,6 +180,7 @@ function App() {
     setAppAddr((await s.get<string>('addr_app')) || '0x08020000');
     setOutDir((await s.get<string>('last_out_dir')) || '');
     setBatchOutDir((await s.get<string>('last_batch_out')) || '');
+    setHexFlashFolder((await s.get<string>('last_hex_flash_dir')) || '');
     const exe = await s.get<string>('jflash_exe');
     if (exe) setJflashExe(exe); else invoke<string>('auto_detect_jflash').then(p => { setJflashExe(p); s.set('jflash_exe', p).then(()=>s.save())});
     
@@ -132,6 +195,24 @@ function App() {
     } catch(e) { console.error(e); }
     setHidLoading(false);
   };
+
+  // HID 列表变化后自动为每个设备获取版本（已有版本或正在请求的跳过）；仅成功时写入，无法获取的不显示
+  useEffect(() => {
+    if (!hidDevices.length) return;
+    hidDevices.forEach((dev) => {
+      const key = hidDeviceKey(dev);
+      if (deviceVersions[key] !== undefined || versionFetchingRef.current.has(key)) return;
+      versionFetchingRef.current.add(key);
+      invoke<string>('get_hid_device_version', {
+        vid: dev.vid,
+        pid: dev.pid,
+        serial: dev.serial_number || null
+      })
+        .then((v) => setDeviceVersions(prev => ({ ...prev, [key]: v })))
+        .catch(() => {})
+        .finally(() => { versionFetchingRef.current.delete(key); });
+    });
+  }, [hidDevices]);
 
   // --- Logic: Matcher & Path ---
   useEffect(() => {
@@ -158,7 +239,7 @@ function App() {
 
   // --- Handlers ---
   const handleSelect = async (key: string, isDir = false) => {
-    if (key.includes('dir') || key.includes('out') || isDir) {
+    if (key.includes('dir') || key.includes('out') || isDir || key === 'hex_folder') {
       const p = await open({ directory: true });
       if (p && typeof p === 'string') {
         const s = await getStore();
@@ -166,6 +247,7 @@ function App() {
         if (key === 'batch_out') { setBatchOutDir(p); s.set('last_batch_out', p); }
         if (key === 'b_boot') setBatchBootDir(p);
         if (key === 'b_app') setBatchAppDir(p);
+        if (key === 'hex_folder') { setHexFlashFolder(p); s.set('last_hex_flash_dir', p); }
         s.save();
       }
       return;
@@ -204,7 +286,8 @@ function App() {
         jflashPath: jflashExe, projectPath: jflashPrj, hexPath: generatedHex
       });
       setStatus('success'); setLog(res);
-      refreshHid(); // 烧录完自动刷新 HID
+      setLastFlashedHexKeywords(extractHexKeywords(generatedHex));
+      refreshHid();
     } catch (e: any) { setStatus('error'); setLog(`❌ ${e}`); }
   };
 
@@ -258,6 +341,7 @@ function App() {
         <div className="flex flex-col gap-4 w-16">
           <NavButton active={tab === 'single'} onClick={() => setTab('single')} icon={Zap} label="合并" />
           <NavButton active={tab === 'batch'} onClick={() => setTab('batch')} icon={Layers} label="批量" />
+          <NavButton active={tab === 'hex'} onClick={() => setTab('hex')} icon={Flame} label="HEX烧录" />
         </div>
         <div className="mt-auto">
           <NavButton onClick={() => setShowSettings(true)} icon={Settings} label="设置" />
@@ -271,7 +355,7 @@ function App() {
         {/* 顶部标题 */}
         <header className="px-10 py-8 z-10">
           <h1 className="text-2xl font-black text-slate-800 tracking-tight">
-            {tab === 'single' ? 'Single Merge & Verify' : 'Batch Processor'}
+            {tab === 'single' ? 'Single Merge & Verify' : tab === 'batch' ? 'Batch Processor' : 'HEX 烧录'}
           </h1>
           <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mt-1">J-Flash Automation Tool</p>
         </header>
@@ -280,7 +364,38 @@ function App() {
           
           {/* 左侧：操作卡片 (自适应宽度) */}
           <div className="flex-1 flex flex-col min-w-0 h-full">
-            {tab === 'single' ? (
+            {tab === 'hex' ? (
+              <GlassCard className="h-full p-8 flex flex-col gap-6">
+                <CleanInput label="HEX 所在文件夹" value={hexFlashFolder} onClick={() => handleSelect('hex_folder')} icon={FolderOpen} placeholder="默认：单次/批量输出目录，可手动选择" />
+                <div className="flex-1 min-h-0 flex flex-col rounded-2xl border border-slate-200 bg-slate-50/80 overflow-hidden">
+                  <div className="px-3 py-2 border-b border-slate-200 text-xs font-bold text-slate-500 uppercase">选择 HEX 文件</div>
+                  <div className="flex-1 overflow-y-auto divide-y divide-slate-100">
+                    {!hexFlashFolder && <div className="p-6 text-center text-slate-400 text-sm">请先选择文件夹</div>}
+                    {hexFlashFolder && hexFileList.length === 0 && <div className="p-6 text-center text-slate-400 text-sm">该目录下无 .hex 文件</div>}
+                    {hexFileList.map(f => (
+                      <button
+                        key={f.path}
+                        onClick={() => setSelectedHexPath(f.path)}
+                        className={clsx("w-full text-left px-4 py-3 font-mono text-sm transition-colors", selectedHexPath === f.path ? "bg-blue-100 text-blue-700 border-l-4 border-blue-500" : "hover:bg-slate-100 text-slate-600")}
+                      >
+                        {f.name}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <div className={clsx("rounded-2xl border p-4 font-mono text-xs whitespace-pre-wrap", hexFlashStatus === 'error' ? "bg-red-50 text-red-600 border-red-100" : "bg-slate-50 text-slate-600 border-slate-100")}>
+                  {hexFlashStatus === 'running' && <Loader2 className="animate-spin inline-block mr-2" size={14} />}
+                  {hexFlashLog || (selectedHexPath ? `已选: ${selectedHexPath.split(/[/\\]/).pop()}` : '在列表中点击一个 HEX 后点击烧录')}
+                </div>
+                <button
+                  onClick={runHexFlash}
+                  disabled={hexFlashStatus === 'running' || !selectedHexPath || !jflashExe || !jflashPrj}
+                  className={clsx("h-14 rounded-2xl font-bold text-white shadow-xl flex items-center justify-center gap-2 transition-all", (!selectedHexPath || hexFlashStatus === 'running') ? "bg-slate-300 cursor-not-allowed" : "bg-gradient-to-r from-orange-500 to-rose-500 hover:scale-[1.02] active:scale-95")}
+                >
+                  <Flame size={20} /> 烧录选中 HEX
+                </button>
+              </GlassCard>
+            ) : tab === 'single' ? (
               <GlassCard className="h-full p-8 flex flex-col gap-6 animate-in fade-in zoom-in-95 duration-300">
                 {/* 文件选择 */}
                 <div className="space-y-4">
@@ -404,15 +519,33 @@ function App() {
                 {hidDevices.length === 0 ? (
                   <div className="text-center text-slate-300 text-xs py-10">未检测到 HID 设备</div>
                 ) : (
-                  hidDevices.map((dev, i) => (
-                    <div key={i} className="bg-white border border-slate-100 p-3 rounded-xl shadow-sm hover:shadow-md transition-all group">
-                      <div className="font-bold text-slate-700 text-sm truncate">{dev.product || "Unknown Device"}</div>
-                      <div className="text-[10px] text-slate-400 font-mono mt-1 group-hover:text-blue-500">
-                        VID: {dev.vid.toString(16).toUpperCase().padStart(4,'0')} <br/>
-                        PID: {dev.pid.toString(16).toUpperCase().padStart(4,'0')}
+                  hidDevices.map((dev, i) => {
+                    const key = hidDeviceKey(dev);
+                    const highlighted = isHidHighlight(dev, lastFlashedHexKeywords);
+                    const version = deviceVersions[key];
+                    return (
+                      <div
+                        key={i}
+                        className={clsx(
+                          "p-3 rounded-xl shadow-sm hover:shadow-md transition-all group border",
+                          highlighted ? "bg-emerald-50 border-emerald-300 ring-2 ring-emerald-200" : "bg-white border-slate-100"
+                        )}
+                      >
+                        <div className="flex items-center justify-between gap-2">
+                          <div className="font-bold text-slate-700 text-sm truncate flex-1">{dev.product || "Unknown Device"}</div>
+                          {highlighted && <span className="text-[10px] font-bold text-emerald-600 shrink-0">烧录匹配</span>}
+                        </div>
+                        <div className="text-[10px] text-slate-400 font-mono mt-1 group-hover:text-blue-500">
+                          VID: {dev.vid.toString(16).toUpperCase().padStart(4,'0')} · PID: {dev.pid.toString(16).toUpperCase().padStart(4,'0')} · UPage: {dev.usage_page?.toString(16).toUpperCase().padStart(4,'0') ?? '—'}
+                        </div>
+                        {version != null && (
+                          <div className="mt-2">
+                            <span className="text-[10px] text-slate-500">版本: {version}</span>
+                          </div>
+                        )}
                       </div>
-                    </div>
-                  ))
+                    );
+                  })
                 )}
               </div>
             </GlassCard>
