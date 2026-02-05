@@ -1,12 +1,13 @@
 import { useState, useEffect, useRef } from 'react';
 import { invoke } from '@tauri-apps/api/core';
-import { open, save } from '@tauri-apps/plugin-dialog';
+import { open } from '@tauri-apps/plugin-dialog';
+import { openPath } from '@tauri-apps/plugin-opener';
 import { readDir } from '@tauri-apps/plugin-fs';
 import { load } from '@tauri-apps/plugin-store';
 import { 
   Settings, Layers, Zap, CheckCircle2, XCircle, Loader2, Cpu, FileCog, 
   Sparkles, ArrowRight, FolderOutput, FolderOpen, Hash, Unlink, 
-  Usb, RefreshCw, Flame, ChevronDown, ChevronUp
+  Usb, RefreshCw, Flame, ChevronDown, ChevronUp, HelpCircle, Copy
 } from 'lucide-react';
 import clsx from 'clsx';
 import { autoMatchFiles, FilePair, verifyFileNameMatch } from './utils/matcher';
@@ -61,14 +62,33 @@ const GlassCard = ({ children, className }: any) => (
   </div>
 );
 
-const CleanInput = ({ label, value, onClick, onChange, icon: Icon, placeholder = "点击选择...", readOnly = true, rightElement }: any) => (
+/** 若路径像是文件（带扩展名）则返回其所在目录，否则返回原路径（用于在资源管理器中打开） */
+function pathToOpenInExplorer(path: string): string {
+  if (!path) return path;
+  if (/\.(bin|hex|exe|jflash|[\w]+)$/i.test(path.trim())) return path.replace(/[/\\][^/\\]+$/, '') || path;
+  return path;
+}
+
+const CleanInput = ({ label, value, onClick, onChange, icon: Icon, placeholder = "点击选择...", readOnly = true, rightElement, pathToOpen }: any) => (
   <div className="w-full">
-    <div className="flex items-center justify-between px-1 mb-1.5">
-      <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1">
+    <div className="flex items-center justify-between px-1 mb-1.5 gap-2">
+      <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1 shrink-0">
         <div className="w-1 h-3 bg-blue-400 rounded-full"></div>
         {label}
       </label>
-      {rightElement}
+      <div className="flex items-center gap-1.5 shrink-0">
+        {pathToOpen && (
+          <button
+            type="button"
+            onClick={(e) => { e.stopPropagation(); openPath(pathToOpenInExplorer(pathToOpen)); }}
+            className="p-1.5 rounded-lg text-slate-400 hover:text-blue-500 hover:bg-blue-50 transition-colors"
+            title="在资源管理器中打开"
+          >
+            <FolderOpen size={14} />
+          </button>
+        )}
+        {rightElement}
+      </div>
     </div>
     <div 
       onClick={!readOnly ? undefined : onClick}
@@ -100,6 +120,7 @@ const CleanInput = ({ label, value, onClick, onChange, icon: Icon, placeholder =
 
 function App() {
   const [showSettings, setShowSettings] = useState(false);
+  const [showHelp, setShowHelp] = useState(false);
   
   // Config
   const [jflashExe, setJflashExe] = useState('');
@@ -352,7 +373,8 @@ function App() {
           <NavButton active={tab === 'batch'} onClick={() => setTab('batch')} icon={Layers} label="批量" />
           <NavButton active={tab === 'hex'} onClick={() => setTab('hex')} icon={Flame} label="HEX烧录" />
         </div>
-        <div className="mt-auto">
+        <div className="mt-auto flex flex-col gap-4">
+          <NavButton onClick={() => setShowHelp(true)} icon={HelpCircle} label="使用说明" />
           <NavButton onClick={() => setShowSettings(true)} icon={Settings} label="设置" />
         </div>
       </aside>
@@ -366,7 +388,7 @@ function App() {
           <h1 className="text-2xl font-black text-slate-800 tracking-tight">
             {tab === 'single' ? 'Single Merge & Verify' : tab === 'batch' ? 'Batch Processor' : 'HEX 烧录'}
           </h1>
-          <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mt-1">J-Flash Automation Tool</p>
+          <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mt-1">Auto-Merge</p>
         </header>
 
         <div className="flex-1 px-10 pb-10 overflow-hidden flex gap-8 z-10">
@@ -408,19 +430,19 @@ function App() {
               <GlassCard className="h-full p-8 flex flex-col gap-6 animate-in fade-in zoom-in-95 duration-300">
                 {/* 文件选择 */}
                 <div className="space-y-4">
-                  <CleanInput label="Bootloader" value={bootPath} onClick={() => handleSelect('boot')} icon={Layers} 
+                  <CleanInput label="Bootloader" value={bootPath} onClick={() => handleSelect('boot')} icon={Layers} pathToOpen={bootPath}
                     rightElement={matchStatus === 'matched' ? <CheckCircle2 className="text-emerald-500" size={16}/> : matchStatus === 'mismatch' ? <Unlink className="text-red-500" size={16}/> : null} />
                   
                   <div className="flex justify-center -my-2 opacity-20"><ArrowRight className="rotate-90" /></div>
                   
-                  <CleanInput label="Application" value={appPath} onClick={() => handleSelect('app')} icon={Zap} 
+                  <CleanInput label="Application" value={appPath} onClick={() => handleSelect('app')} icon={Zap} pathToOpen={appPath}
                     rightElement={matchStatus === 'matched' ? <CheckCircle2 className="text-emerald-500" size={16}/> : matchStatus === 'mismatch' ? <Unlink className="text-red-500" size={16}/> : null} />
                 </div>
 
                 {/* 配置区 */}
                 <div className="grid grid-cols-2 gap-4">
                   <CleanInput label="物料号 (前缀)" value={materialCode} onChange={(e:any) => setMaterialCode(e.target.value)} readOnly={false} icon={Hash} placeholder="例如 2211..." />
-                  <CleanInput label="输出目录" value={getPreviewPath()} onClick={() => handleSelect('out_dir')} icon={FolderOutput} placeholder="默认同级" />
+                  <CleanInput label="输出目录" value={getPreviewPath()} onClick={() => handleSelect('out_dir')} icon={FolderOutput} placeholder="默认同级" pathToOpen={outDir || (appPath ? appPath.replace(/[/\\][^/\\]+$/, '') : '')} />
                 </div>
 
                 {/* 状态反馈 */}
@@ -463,9 +485,9 @@ function App() {
                     <h2 className="text-lg font-black text-rose-700 tracking-tight">批量 Merge</h2>
                   </div>
                   <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-4">
-                    <CleanInput label="Boot 目录" value={batchBootDir} onClick={() => handleSelect('b_boot', true)} icon={FolderOpen} placeholder="选择文件夹" />
-                    <CleanInput label="App 目录" value={batchAppDir} onClick={() => handleSelect('b_app', true)} icon={FolderOpen} placeholder="选择文件夹" />
-                    <CleanInput label="HEX 输出目录" value={batchOutDir} onClick={() => handleSelect('batch_out')} icon={FolderOutput} placeholder="默认 App/Merged_Output" />
+                    <CleanInput label="Boot 目录" value={batchBootDir} onClick={() => handleSelect('b_boot', true)} icon={FolderOpen} placeholder="选择文件夹" pathToOpen={batchBootDir} />
+                    <CleanInput label="App 目录" value={batchAppDir} onClick={() => handleSelect('b_app', true)} icon={FolderOpen} placeholder="选择文件夹" pathToOpen={batchAppDir} />
+                    <CleanInput label="HEX 输出目录" value={batchOutDir} onClick={() => handleSelect('batch_out')} icon={FolderOutput} placeholder="默认 App/Merged_Output" pathToOpen={batchOutDir} />
                   </div>
                   <div className="flex-1 min-h-0 flex flex-col rounded-2xl border border-pink-200/60 bg-white/70 overflow-hidden">
                     <div className="flex items-center justify-between px-4 py-2 bg-rose-100/60 border-b border-pink-200/60 text-xs font-bold text-rose-700 uppercase tracking-wider">
@@ -618,6 +640,132 @@ function App() {
 
         </div>
       </main>
+
+      {/* Help Modal (使用说明) */}
+      {showHelp && (
+        <div className="fixed inset-0 z-50 bg-slate-900/20 backdrop-blur-sm flex items-center justify-center p-10 animate-in fade-in">
+          <div className="bg-white w-full max-w-2xl max-h-[90vh] rounded-[2.5rem] shadow-2xl p-10 relative flex flex-col">
+            <button onClick={() => setShowHelp(false)} className="absolute top-6 right-6 p-2 hover:bg-slate-100 rounded-full z-10"><XCircle size={24} className="text-slate-300 hover:text-slate-600" /></button>
+            <h2 className="text-2xl font-black text-slate-800 mb-1">使用说明</h2>
+            <p className="text-sm text-slate-500 mb-6">Bootloader + Application 合并为 HEX，配合 J-Flash 烧录。<span className="text-blue-600 font-semibold">单次</span> / <span className="text-indigo-600 font-semibold">批量</span> / <span className="text-amber-600 font-semibold">HEX 烧录</span>。</p>
+            <div className="flex-1 overflow-y-auto pr-2 space-y-5 text-sm">
+              {/* 一、设置 */}
+              <section className="rounded-2xl bg-gradient-to-br from-blue-50 to-indigo-50/50 border border-blue-100 p-5">
+                <h3 className="text-lg font-black text-blue-700 mb-1 flex items-center gap-2">
+                  <span className="flex w-7 h-7 items-center justify-center rounded-lg bg-blue-500 text-white text-xs font-bold">1</span>
+                  设置（首次使用必读）
+                </h3>
+                <p className="text-slate-600 text-xs mb-4">左侧边栏点击 <span className="inline-flex items-center px-2 py-0.5 rounded bg-white border border-slate-200 font-medium text-slate-700">设置</span>，配置会保存并自动生效。</p>
+                <div className="space-y-4">
+                  <div className="bg-white/80 rounded-xl p-4 border border-slate-100">
+                    <h4 className="font-bold text-slate-800 mb-2 flex items-center gap-2 text-blue-700"><Cpu size={16} /> J-Flash.exe 路径</h4>
+                    <p className="text-slate-600 text-xs mb-2">常见位置（按版本选一个）：</p>
+                    <div className="flex items-center gap-2 mb-2">
+                      <code className="flex-1 font-mono text-xs bg-slate-800 text-emerald-300 px-3 py-2 rounded-lg select-all cursor-text break-all" title="点击选中后可复制">
+                        C:\Program Files\SEGGER\JLink_Vxxx\JFlash.exe
+                      </code>
+                      <button
+                        type="button"
+                        onClick={() => navigator.clipboard.writeText('C:\\Program Files\\SEGGER\\JLink_Vxxx\\JFlash.exe')}
+                        className="shrink-0 p-2 rounded-lg bg-slate-700 hover:bg-slate-600 text-slate-200 hover:text-white transition-colors"
+                        title="复制路径"
+                      >
+                        <Copy size={16} />
+                      </button>
+                    </div>
+                    <p className="text-slate-500 text-xs mb-1 font-medium">操作步骤：</p>
+                    <ol className="text-slate-600 text-xs space-y-1 list-decimal list-inside">
+                      <li>资源管理器 → 进入 <code className="text-blue-600 bg-blue-50 px-1 rounded">C:\Program Files\SEGGER</code></li>
+                      <li>在 <code className="text-indigo-600 bg-indigo-50 px-1 rounded">JLink_Vxxx</code> 文件夹中找到 <strong className="text-slate-700">JFlash.exe</strong></li>
+                      <li>本工具设置里点击「J-Flash.exe」→ 选择该文件</li>
+                    </ol>
+                  </div>
+                  <div className="bg-white/80 rounded-xl p-4 border border-slate-100">
+                    <h4 className="font-bold text-slate-800 mb-2 flex items-center gap-2 text-indigo-700"><FileCog size={16} /> J-Flash 项目文件（.jflash）</h4>
+                    <p className="text-slate-600 text-xs mb-2"><span className="font-semibold text-emerald-700">已有工程</span>：设置中选「Project File」直接选 .jflash。</p>
+                    <p className="text-slate-600 text-xs mb-1"><span className="font-semibold text-amber-700">需要新配置</span>：</p>
+                    <ol className="text-slate-600 text-xs space-y-1 list-decimal list-inside">
+                      <li>单独打开 <strong>SEGGER J-Flash</strong></li>
+                      <li>配置芯片、接口、速率等</li>
+                      <li>菜单 <strong className="text-indigo-600">File → Save project as...</strong> 保存为 .jflash</li>
+                      <li>回到本工具「Project File」中导入该文件</li>
+                    </ol>
+                  </div>
+                  <div className="bg-white/80 rounded-xl p-3 border border-slate-100">
+                    <h4 className="font-bold text-slate-800 mb-1 flex items-center gap-2 text-slate-700"><Hash size={16} /> Boot Addr / App Addr</h4>
+                    <p className="text-slate-600 text-xs">默认 <span className="font-mono text-blue-600">0x08000000</span> / <span className="font-mono text-indigo-600">0x08020000</span>，在设置中按工程修改。</p>
+                  </div>
+                </div>
+              </section>
+              {/* 二、BOOT/APP 路径 */}
+              <section className="rounded-2xl bg-gradient-to-br from-emerald-50 to-teal-50/50 border border-emerald-100 p-5">
+                <h3 className="text-lg font-black text-emerald-700 mb-1 flex items-center gap-2">
+                  <span className="flex w-7 h-7 items-center justify-center rounded-lg bg-emerald-500 text-white text-xs font-bold">2</span>
+                  BOOT 与 APP 路径（可完全自定义）
+                </h3>
+                <div className="space-y-3 mt-3">
+                  <div className="flex gap-3">
+                    <span className="shrink-0 w-6 h-6 rounded-lg bg-blue-100 text-blue-600 flex items-center justify-center text-xs font-bold">单</span>
+                    <p className="text-slate-600 text-xs">点击 <strong className="text-slate-700">Bootloader</strong>、<strong className="text-slate-700">Application</strong>，在<strong className="text-emerald-600">任意路径</strong>下选 BOOT/APP 文件（.bin / .hex）。</p>
+                  </div>
+                  <div className="flex gap-3">
+                    <span className="shrink-0 w-6 h-6 rounded-lg bg-indigo-100 text-indigo-600 flex items-center justify-center text-xs font-bold">批</span>
+                    <p className="text-slate-600 text-xs">选 BOOT 目录、APP 目录（<strong className="text-emerald-600">任意路径</strong>），工具按文件名自动配对；输出目录可自定义。</p>
+                  </div>
+                </div>
+              </section>
+              {/* 三、功能入口 */}
+              <section className="rounded-2xl bg-slate-50 border border-slate-200 p-5">
+                <h3 className="text-lg font-black text-slate-800 mb-3 flex items-center gap-2">
+                  <span className="flex w-7 h-7 items-center justify-center rounded-lg bg-slate-600 text-white text-xs font-bold">3</span>
+                  功能入口
+                </h3>
+                <div className="grid grid-cols-2 gap-2">
+                  <div className="flex items-start gap-2 rounded-xl bg-white p-3 border border-blue-100">
+                    <Zap className="shrink-0 text-blue-500 mt-0.5" size={18} />
+                    <div><span className="font-bold text-blue-600">合并</span><span className="text-slate-600 text-xs block">单次 BOOT+APP → HEX，可烧录</span></div>
+                  </div>
+                  <div className="flex items-start gap-2 rounded-xl bg-white p-3 border border-indigo-100">
+                    <Layers className="shrink-0 text-indigo-500 mt-0.5" size={18} />
+                    <div><span className="font-bold text-indigo-600">批量</span><span className="text-slate-600 text-xs block">多对自动匹配合并</span></div>
+                  </div>
+                  <div className="flex items-start gap-2 rounded-xl bg-white p-3 border border-amber-100">
+                    <Flame className="shrink-0 text-amber-500 mt-0.5" size={18} />
+                    <div><span className="font-bold text-amber-600">HEX烧录</span><span className="text-slate-600 text-xs block">选 HEX 文件直接烧录</span></div>
+                  </div>
+                  <div className="flex items-start gap-2 rounded-xl bg-white p-3 border border-slate-200">
+                    <Settings className="shrink-0 text-slate-500 mt-0.5" size={18} />
+                    <div><span className="font-bold text-slate-700">设置</span><span className="text-slate-600 text-xs block">J-Flash、.jflash、地址</span></div>
+                  </div>
+                </div>
+              </section>
+              {/* 四、使用前检查 */}
+              <section className="rounded-2xl bg-amber-50/80 border border-amber-200 p-5">
+                <h3 className="text-lg font-black text-amber-800 mb-3 flex items-center gap-2">
+                  <span className="flex w-7 h-7 items-center justify-center rounded-lg bg-amber-500 text-white text-xs font-bold">4</span>
+                  使用前检查
+                </h3>
+                <ul className="space-y-2">
+                  {[
+                    { done: true, text: '设置中已选 J-Flash.exe（建议到 C:\\Program Files\\SEGGER 下按版本选）' },
+                    { done: true, text: '已选或新建 .jflash；新配置先在 J-Flash 中保存再导入' },
+                    { done: true, text: 'Boot Addr、App Addr 与工程一致' },
+                    { done: true, text: 'BOOT/APP 路径可任意自定义' },
+                  ].map((item, i) => (
+                    <li key={i} className="flex items-start gap-2 text-xs">
+                      <CheckCircle2 className="shrink-0 text-emerald-500 mt-0.5" size={16} />
+                      <span className={item.done ? "text-slate-700" : "text-slate-600"}>{item.text}</span>
+                    </li>
+                  ))}
+                </ul>
+              </section>
+            </div>
+            <div className="mt-6 pt-4 border-t border-slate-200 flex justify-end">
+              <button onClick={() => setShowHelp(false)} className="px-8 py-3 bg-slate-800 text-white rounded-xl font-bold hover:bg-black transition-colors shadow-lg">关闭</button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Settings Modal (Overlay) */}
       {showSettings && (
