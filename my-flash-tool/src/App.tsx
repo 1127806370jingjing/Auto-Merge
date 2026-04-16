@@ -236,7 +236,8 @@ function App() {
       invoke<string>('get_hid_device_version', {
         vid: dev.vid,
         pid: dev.pid,
-        serial: dev.serial_number || null
+        serial: dev.serial_number || null,
+        usagePage: dev.usage_page ?? null
       })
         .then((v) => setDeviceVersions(prev => ({ ...prev, [key]: v })))
         .catch(() => {})
@@ -556,6 +557,7 @@ function App() {
                     const key = hidDeviceKey(dev);
                     const highlighted = isHidHighlight(dev, lastFlashedHexKeywords);
                     const isBoot = isBootModeDevice(dev);
+                    const canSwitchToBoot = !isBoot && Number(dev.usage_page) === 0xFF60;
                     const version = deviceVersions[key];
                     const isSelected = selectedHidKey === key;
                     const vidStr = dev.vid.toString(16).toUpperCase().padStart(4, '0');
@@ -604,7 +606,12 @@ function App() {
                                     setBootSwitchLoading(key);
                                     setBootSwitchTip(null);
                                     try {
-                                      await invoke('switch_hid_to_boot_mode', { vid: dev.vid, pid: dev.pid, serial: dev.serial_number || null });
+                                      await invoke('switch_hid_to_boot_mode', {
+                                        vid: dev.vid,
+                                        pid: dev.pid,
+                                        serial: dev.serial_number || null,
+                                        usagePage: dev.usage_page ?? null
+                                      });
                                       setBootSwitchTip('已发送进入 BOOT 指令，设备将重启；请稍后刷新列表查看 BOOT 设备（不同 PID/VID）');
                                       setTimeout(() => { refreshHid(); setBootSwitchTip(null); setSelectedHidKey(null); }, 3500);
                                     } catch (e: any) {
@@ -612,12 +619,17 @@ function App() {
                                     }
                                     setBootSwitchLoading(null);
                                   }}
-                                  disabled={bootSwitchLoading === key}
+                                  disabled={bootSwitchLoading === key || !canSwitchToBoot}
                                   className="w-full flex items-center justify-center gap-1.5 py-2 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold disabled:opacity-50"
                                 >
                                   {bootSwitchLoading === key ? <Loader2 size={12} className="animate-spin" /> : <Layers size={12} />}
                                   进入 BOOT 模式
                                 </button>
+                                {!canSwitchToBoot && (
+                                  <div className="text-[10px] text-amber-700 bg-amber-50 rounded p-2">
+                                    只有 Usage Page 为 0xFF60 的 APP 接口支持进入 BOOT。
+                                  </div>
+                                )}
                                 {bootSwitchTip && selectedHidKey === key && (
                                   <div className="text-[10px] text-blue-600 bg-blue-50 rounded p-2">{bootSwitchTip}</div>
                                 )}
